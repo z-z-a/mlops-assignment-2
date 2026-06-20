@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from functools import lru_cache
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -55,8 +56,15 @@ class AgentState:
     history: list[dict[str, Any]] = field(default_factory=list)
 
 
+@lru_cache(maxsize=1)
 def llm() -> ChatOpenAI:
-    """Chat client pointed at VLLM_BASE_URL (your local vLLM by default)."""
+    """Shared chat client pointed at VLLM_BASE_URL (your local vLLM by default).
+
+    Cached so the underlying httpx connection pool is reused across every node
+    call instead of rebuilding a client (and a fresh TCP/keepalive pool) per
+    request. The openai/httpx sync client is thread-safe, so the FastAPI
+    threadpool can share this single instance.
+    """
     return ChatOpenAI(
         model=VLLM_MODEL,
         base_url=VLLM_BASE_URL,
