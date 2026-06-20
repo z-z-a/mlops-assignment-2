@@ -57,8 +57,67 @@ def matches(gold_rows: list[tuple] | None, pred_rows: list[tuple] | None) -> boo
 # ---------- Implement these (Phase 5) ----------------------------------
 
 def eval_one(question: dict, agent_url: str) -> dict:
-    """Score one question. Return a dict capturing per-iteration correctness."""
-    raise NotImplementedError("Phase 5")
+    """Score one question, capturing correctness at every iteration."""
+    db_id = question["db_id"]
+    gold_sql = question["gold_sql"]
+    q_text = question["question"]
+
+    # Gold result once (the ground truth row set).
+    gold_ok, gold_rows, gold_err = run_sql(db_id, gold_sql)
+
+    # Ask the agent. Tag the run so it's findable in Langfuse (Phase 4/6).
+    t0 = time.monotonic()
+    try:
+        resp = httpx.post(
+            agent_url,
+            json={
+                "question": q_text,
+                "db": db_id,
+                "tags": {"tags": "phase5,baseline", "run_id": "eval-baseline"},
+            },
+            timeout=120.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        agent_error = data.get("error")
+    except Exception as e:  # noqa: BLE001
+        return {
+            "db_id": db_id, "question": q_text, "gold_sql": gold_sql,
+            "gold_ok": gold_ok, "gold_error": gold_err,
+            "final_sql": "", "candidates": [], "num_iterations": 0,
+            "correct_per_iter": [], "final_correct": False,
+            "agent_error": f"{type(e).__name__}: {e}",
+            "latency_s": time.monotonic() - t0,
+        }
+    latency = time.monotonic() - t0
+
+    # Ordered SQL candidates, one per generate/revise step.
+    history = data.get("history", [])
+    candidates = [h["sql"] for h in history if "sql" in h]
+    if not candidates and data.get("sql"):
+        candidates = [data["sql"]]  # fallback if history is empty
+
+    # Score each candidate by executed row set against gold.
+    correct_per_iter: list[bool] = []
+    for sql in candidates:
+        ok, rows, _ = run_sql(db_id, sql)
+        correct_per_iter.append(bool(ok and gold_ok and matches(gold_rows, rows)))
+
+    return {
+        "db_id": db_id,
+        "question": q_text,
+        "gold_sql": gold_sql,
+        "gold_ok": gold_ok,
+        "gold_error": gold_err,
+        "final_sql": candidates[-1] if candidates else "",
+        "candidates": candidates,
+        "num_iterations": len(candidates),
+        "correct_per_iter": correct_per_iter,
+        "final_correct": correct_per_iter[-1] if correct_per_iter else False,
+        "agent_ok": data.get("ok"),
+        "agent_error": agent_error,
+        "latency_s": latency,
+    }
 
 
 def summarize(results: list[dict]) -> dict:
@@ -70,7 +129,36 @@ def summarize(results: list[dict]) -> dict:
     The agent stopped emitting; whatever it had at termination is what
     would have been served had we polled at iteration k.
     """
-    raise NotImplementedError("Phase 5")
+    n = len(results)
+    if n == 0:
+        return {"n": 0}
+
+    overall = sum(1 for r in results if r["final_correct"]) / n
+
+    max_iters = max((r["num_iterations"] for r in results), default=0)
+    pass_rate_by_iteration = []
+    for k in range(max_iters):
+        correct = 0
+        for r in results:
+            cpi = r["correct_per_iter"]
+            if not cpi:
+                continue  # agent error -> incorrect at every iteration
+            idx = k if k < len(cpi) else len(cpi) - 1  # carry last forward
+            correct += int(cpi[idx])
+        pass_rate_by_iteration.append({"iteration": k, "pass_rate": correct / n})
+
+    iter_dist: dict[int, int] = {}
+    for r in results:
+        iter_dist[r["num_iterations"]] = iter_dist.get(r["num_iterations"], 0) + 1
+
+    return {
+        "n": n,
+        "overall_pass_rate": round(overall, 4),
+        "pass_rate_by_iteration": pass_rate_by_iteration,
+        "iteration_distribution": dict(sorted(iter_dist.items())),
+        "agent_errors": sum(1 for r in results if r.get("agent_error")),
+        "mean_latency_s": round(sum(r["latency_s"] for r in results) / n, 3),
+    }
 
 
 # ---------- Main (provided) --------------------------------------------
