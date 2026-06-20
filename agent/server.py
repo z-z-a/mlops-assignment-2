@@ -35,7 +35,10 @@ app = FastAPI()
 class AnswerRequest(BaseModel):
     question: str
     db: str
-    tags: dict[str, str] = {}
+    # Free-form per-request metadata. A "tags" entry (comma-separated string or
+    # list) becomes visible Langfuse tag chips; everything else passes through
+    # as filterable trace metadata (e.g. run_id, config_version) for Phase 6.
+    tags: dict[str, Any] = {}
 
 
 class AnswerResponse(BaseModel):
@@ -55,9 +58,21 @@ def health() -> dict[str, str]:
 @app.post("/answer", response_model=AnswerResponse)
 def answer(req: AnswerRequest) -> AnswerResponse:
     state = AgentState(question=req.question, db_id=req.db)
+
+    # Split incoming tags into Langfuse chips (langfuse_tags) + structured
+    # metadata. Langfuse v4's LangChain integration reads the reserved
+    # "langfuse_tags" key from run-config metadata and renders it as trace
+    # chips; all other keys remain filterable trace metadata.
+    md: dict[str, Any] = dict(req.tags)
+    chips = md.pop("tags", "")
+    langfuse_tags = (
+        chips if isinstance(chips, list)
+        else [t.strip() for t in str(chips).split(",") if t.strip()]
+    )
+
     config: dict[str, Any] = {
         "callbacks": [_lf_handler] if _lf_handler is not None else [],
-        "metadata": req.tags,
+        "metadata": {**md, "langfuse_tags": langfuse_tags},
     }
     try:
         final = graph.invoke(state, config=config)
