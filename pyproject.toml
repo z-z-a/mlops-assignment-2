@@ -12,7 +12,7 @@ dependencies = [
     "langchain-openai>=1.0,<2.0",
     "langfuse>=4.0,<5.0",
     # Server wrapper
-    "fastapi>=0.115,<1.0",
+    "fastapi>=0.115,<0.116",
     "uvicorn[standard]>=0.30,<1.0",
     "pydantic>=2.0,<3.0",
     # Data + utilities
@@ -21,6 +21,9 @@ dependencies = [
     "httpx>=0.27,<1.0",
     "aiohttp>=3.9,<4.0",
     "tqdm>=4.66,<5.0",
+     "transformers>=4.55.2,<5",
+    "starlette<0.42",
+    "prometheus-fastapi-instrumentator>=7,<8",
 ]
 
 [build-system]
