@@ -24,6 +24,36 @@ def _q(ident: str) -> str:
     return '"' + ident.replace('"', '""') + '"'
 
 
+def _example_values(conn: sqlite3.Connection, table: str, col: str,
+                    limit: int = 3, maxlen: int = 40) -> str:
+    """Return a `-- e.g. ...` comment with up to `limit` distinct sample values.
+
+    Showing real stored values lets the model match string literals exactly
+    (casing/spelling/coding) and pick the right column - the most common
+    silent-wrong cause on BIRD. Returns "" if there's nothing useful to show
+    (blob/empty) or the probe fails (never breaks schema rendering).
+    """
+    try:
+        rows = conn.execute(
+            f"SELECT DISTINCT {_q(col)} FROM {_q(table)} "
+            f"WHERE {_q(col)} IS NOT NULL LIMIT {limit}"
+        ).fetchall()
+    except sqlite3.Error:
+        return ""
+    vals: list[str] = []
+    for (v,) in rows:
+        if isinstance(v, bytes):
+            return ""  # blob column - examples aren't useful
+        if isinstance(v, str):
+            s = v.replace("\n", " ").strip()
+            if len(s) > maxlen:
+                s = s[:maxlen] + "..."
+            vals.append("'" + s.replace("'", "''") + "'")
+        else:
+            vals.append(str(v))
+    return "-- e.g. " + ", ".join(vals) if vals else ""
+
+
 @lru_cache(maxsize=32)
 def render_schema(db_id: str) -> str:
     path = db_path(db_id)
@@ -42,22 +72,32 @@ def render_schema(db_id: str) -> str:
         ]
         for t in tables:
             parts.append(f"\nCREATE TABLE {_q(t)} (")
-            col_lines: list[str] = []
+            # Each entry is (definition, comment); the comma goes between the
+            # definition and the comment so the rendered DDL stays valid-looking
+            # (a trailing comma must not land inside a `--` comment).
+            entries: list[tuple[str, str]] = []
             for _cid, name, ctype, notnull, _dflt, pk in conn.execute(f"PRAGMA table_info({_q(t)})"):
                 line = f"  {_q(name)} {ctype}"
                 if pk:
                     line += " PRIMARY KEY"
                 if notnull and not pk:
                     line += " NOT NULL"
-                col_lines.append(line)
+                # Annotate non-PK columns with real example values; PKs are IDs,
+                # not useful as literals.
+                comment = "" if pk else _example_values(conn, t, name)
+                entries.append((line, comment))
             for fk in conn.execute(f"PRAGMA foreign_key_list({_q(t)})"):
                 # (id, seq, ref_table, from, to, on_update, on_delete, match)
                 ref_table, from_col, to_col = fk[2], fk[3], fk[4]
                 # SQLite reports `to` as NULL when the FK references the parent's
                 # primary key implicitly; render without the column in that case.
                 ref = f"{_q(ref_table)}({_q(to_col)})" if to_col is not None else _q(ref_table)
-                col_lines.append(f"  FOREIGN KEY ({_q(from_col)}) REFERENCES {ref}")
-            parts.append(",\n".join(col_lines))
+                entries.append((f"  FOREIGN KEY ({_q(from_col)}) REFERENCES {ref}", ""))
+            rendered = []
+            for i, (defn, comment) in enumerate(entries):
+                sep = "," if i < len(entries) - 1 else ""
+                rendered.append(f"{defn}{sep}  {comment}".rstrip() if comment else f"{defn}{sep}")
+            parts.append("\n".join(rendered))
             parts.append(");")
     return "\n".join(parts)
 

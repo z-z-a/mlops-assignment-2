@@ -31,7 +31,8 @@ from agent.execution import ExecutionResult, execute_sql
 from agent.schema import render_schema
 
 
-MAX_ITERATIONS = 3
+
+MAX_ITERATIONS = 2
 
 VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "http://localhost:8000/v1")
 VLLM_MODEL = os.environ.get("VLLM_MODEL", "Qwen/Qwen3-30B-A3B-Instruct-2507")
