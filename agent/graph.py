@@ -31,8 +31,9 @@ from agent.execution import ExecutionResult, execute_sql
 from agent.schema import render_schema
 
 # Total generate + revise calls before the loop is forced to stop.
-# 3-5 is a reasonable range; tune it as part of Phase 3.
-MAX_ITERATIONS = 3
+# Phase 6: lowered 3->2. The 3rd iteration (a 6th vLLM call) was the p95/p99
+# tail under load and added ~0 quality (Phase 5: iter2 added 1/30 questions).
+MAX_ITERATIONS = 2
 
 VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "http://localhost:8000/v1")
 VLLM_MODEL = os.environ.get("VLLM_MODEL", "Qwen/Qwen3-30B-A3B-Instruct-2507")
