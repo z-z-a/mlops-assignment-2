@@ -52,9 +52,11 @@ def render_schema(db_id: str) -> str:
                 col_lines.append(line)
             for fk in conn.execute(f"PRAGMA foreign_key_list({_q(t)})"):
                 # (id, seq, ref_table, from, to, on_update, on_delete, match)
-                col_lines.append(
-                    f"  FOREIGN KEY ({_q(fk[3])}) REFERENCES {_q(fk[2])}({_q(fk[4])})"
-                )
+                ref_table, from_col, to_col = fk[2], fk[3], fk[4]
+                # SQLite reports `to` as NULL when the FK references the parent's
+                # primary key implicitly; render without the column in that case.
+                ref = f"{_q(ref_table)}({_q(to_col)})" if to_col is not None else _q(ref_table)
+                col_lines.append(f"  FOREIGN KEY ({_q(from_col)}) REFERENCES {ref}")
             parts.append(",\n".join(col_lines))
             parts.append(");")
     return "\n".join(parts)
