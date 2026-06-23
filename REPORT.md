@@ -1,4 +1,5 @@
 # Report: LLM inference + o11y
+By Zvi Amolsky
 
 ## 1. Serving configuration (Phase 1)
 
